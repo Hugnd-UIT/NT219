@@ -1,0 +1,263 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Crypto++ GCC",
+      "type": "process",
+      "command": "C:\\msys64\\mingw64\\bin\\g++.exe",
+      "args": [
+        "-DUSE_CRYPTOPP",
+        "-g",
+        "-O3",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.exe",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\Cryptopp",
+        "C:\\Cryptopp\\libcryptopp.a",
+        "-lpthread"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "Crypto++ CLANG",
+      "type": "process",
+      "command": "C:\\msys64\\mingw64\\bin\\clang++.exe",
+      "args": [
+        "-DUSE_CRYPTOPP",
+        "-g",
+        "-O3",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.exe",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\Cryptopp",
+        "C:\\Cryptopp\\libcryptopp.a",
+        "-lpthread"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "Crypto++ MSVC",
+      "type": "process",
+      "command": "cl.exe",
+      "args": [
+        "/std:c++17",
+        "/DUSE_CRYPTOPP",
+        "/EHsc",
+        "/O2",
+        "/Fe:${fileDirname}\\${fileBasenameNoExtension}.exe",
+        "${file}",
+        "/I",
+        "${workspaceFolder}\\include",
+        "/I",
+        "C:\\Cryptopp",
+        "/link",
+        "C:\\Cryptopp\\x64\\Output\\Release\\cryptlib.lib"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "OpenSSL: build EXE",
+      "type": "process",
+      "command": "C:\\msys64\\mingw64\\bin\\g++.exe",
+      "args": [
+        "-g",
+        "-O3",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.exe",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\Openssl\\include",
+        "C:\\Openssl\\lib\\libssl.lib",
+        "C:\\Openssl\\lib\\libcrypto.lib",
+        "-lws2_32",
+        "-lgdi32",
+        "-lcrypt32",
+        "-ladvapi32"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "OpenSSL: build DLL",
+      "type": "process",
+      "command": "C:\\msys64\\mingw64\\bin\\g++.exe",
+      "args": [
+        "-shared",
+        "-DBUILDING_DLL",
+        "-g",
+        "-O3",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.dll",
+        "-Wl,--out-implib,${fileDirname}\\lib${fileBasenameNoExtension}.a",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\Openssl\\include",
+        "C:\\Openssl\\lib\\libssl.lib",
+        "C:\\Openssl\\lib\\libcrypto.lib",
+        "-lws2_32",
+        "-lgdi32",
+        "-lcrypt32",
+        "-ladvapi32"
+      ],
+      "group": "build"
+    },
+    {
+      "type": "process",
+      "label": "MinGW: build DLL (.dll + .a)",
+      "command": "C:\\msys64\\mingw64\\bin\\g++.exe",
+      "args": [
+        "-std=c++17",
+        "-g2",
+        "-O3",
+        "-DNDEBUG",
+        "-shared",
+        "-DBUILDING_DLL",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.dll",
+        "-Wl,--out-implib,${fileDirname}\\lib${fileBasenameNoExtension}.a",
+        "-D_WIN32_WINNT=0x0602",
+        "-lpthread",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\Cryptopp",
+        "C:\\Cryptopp\\libcryptopp_gcc.a",
+        "-ladvapi32",
+        "-Wall"
+      ],
+      "group": "build"
+    },
+    {
+      "type": "shell",
+      "label": "MinGW: build static library (.a)",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "C:\\msys64\\mingw64\\bin\\g++.exe -c -std=c++17 -g2 -O3 -DNDEBUG -D_WIN32_WINNT=0x0602 -I${workspaceFolder}\\include -IC:\\Cryptopp -IC:\\OpenSSL\\include -Wall \"${file}\" -o \"${fileDirname}\\${fileBasenameNoExtension}.o\" && C:\\msys64\\mingw64\\bin\\ar.exe rcs \"${fileDirname}\\lib${fileBasenameNoExtension}.a\" \"${fileDirname}\\${fileBasenameNoExtension}.o\""
+      ],
+      "group": "build"
+    },
+    {
+      "type": "shell",
+      "label": "MSVC: build static library (.lib)",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "cl.exe /c /std:c++17 /EHsc /O2 /DNDEBUG /I \"${workspaceFolder}\\include\" /I \"C:\\Cryptopp\" /I \"C:\\OpenSSL\\include\" \"${file}\" /Fo\"${fileDirname}\\${fileBasenameNoExtension}.obj\" && lib.exe /OUT:\"${fileDirname}\\${fileBasenameNoExtension}.lib\" \"${fileDirname}\\${fileBasenameNoExtension}.obj\""
+      ],
+      "group": "build"
+    },
+    {
+      "type": "process",
+      "label": "MSVC: build DLL (.dll + .lib)",
+      "command": "cl.exe",
+      "args": [
+        "/std:c++17",
+        "/EHsc",
+        "/O2",
+        "/DNDEBUG",
+        "/DBUILDING_DLL",
+        "/LD",
+        "${file}",
+        "/I",
+        "${workspaceFolder}\\include",
+        "/I",
+        "C:\\Cryptopp",
+        "/link",
+        "/OUT:${fileDirname}\\${fileBasenameNoExtension}.dll",
+        "/IMPLIB:${fileDirname}\\${fileBasenameNoExtension}.lib",
+        "C:\\Cryptopp\\x64\\Output\\Release\\cryptlib.lib",
+        "advapi32.lib"
+      ],
+      "group": "build"
+    },
+    {
+      "type": "shell",
+      "label": "Clang: build static library (.a)",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "C:\\msys64\\mingw64\\bin\\clang++.exe -c -std=c++17 -O3 -DNDEBUG -D_WIN32_WINNT=0x0602 -I${workspaceFolder}\\include -IC:\\Cryptopp -IC:\\OpenSSL\\include -Wall \"${file}\" -o \"${fileDirname}\\${fileBasenameNoExtension}.o\" && C:\\msys64\\mingw64\\bin\\llvm-ar.exe rcs \"${fileDirname}\\lib${fileBasenameNoExtension}.a\" \"${fileDirname}\\${fileBasenameNoExtension}.o\""
+      ],
+      "group": "build"
+    },
+    {
+      "type": "process",
+      "label": "Clang: build DLL (.dll + .a)",
+      "command": "C:\\msys64\\mingw64\\bin\\clang++.exe",
+      "args": [
+        "-std=c++17",
+        "-O3",
+        "-DNDEBUG",
+        "-shared",
+        "-DBUILDING_DLL",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.dll",
+        "-Wl,--out-implib,${fileDirname}\\lib${fileBasenameNoExtension}.a",
+        "-D_WIN32_WINNT=0x0602",
+        "-lpthread",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\Cryptopp",
+        "C:\\Cryptopp\\libcryptopp_clang.a",
+        "-ladvapi32",
+        "-w",
+        "-Wall"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "OQS: build EXE",
+      "type": "process",
+      "command": "C:\\msys64\\mingw64\\bin\\g++.exe",
+      "args": [
+        "-std=c++17",
+        "-g",
+        "-O3",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.exe",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\msys64\\mingw64\\include",
+        "C:\\msys64\\mingw64\\lib\\liboqs.dll.a",
+        "-lpthread",
+        "-lcrypt32",
+        "-ladvapi32"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "OQS: build DLL (.dll + .a)",
+      "type": "process",
+      "command": "C:\\msys64\\mingw64\\bin\\g++.exe",
+      "args": [
+        "-std=c++17",
+        "-g",
+        "-O3",
+        "-shared",
+        "-DBUILDING_DLL",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.dll",
+        "-Wl,--out-implib,${fileDirname}\\lib${fileBasenameNoExtension}.a",
+        "-I${workspaceFolder}\\include",
+        "-IC:\\msys64\\mingw64\\include",
+        "C:\\msys64\\mingw64\\lib\\liboqs.dll.a",
+        "-lpthread",
+        "-lcrypt32",
+        "-ladvapi32"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "OQS: build static library (.a)",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "C:\\msys64\\mingw64\\bin\\g++.exe -c -std=c++17 -g -O3 -I${workspaceFolder}\\include -IC:\\msys64\\mingw64\\include \"${file}\" -o \"${fileDirname}\\${fileBasenameNoExtension}.o\" && C:\\msys64\\mingw64\\bin\\ar.exe rcs \"${fileDirname}\\lib${fileBasenameNoExtension}.a\" \"${fileDirname}\\${fileBasenameNoExtension}.o\""
+      ],
+      "group": "build"
+    }
+  ]
+}
