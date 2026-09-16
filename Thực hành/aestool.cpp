@@ -24,9 +24,7 @@ using namespace std;
 using namespace CryptoPP;
 namespace fs = std::filesystem;
 
-//////////////////////////////////////////////////////////////
 // Utilities
-//////////////////////////////////////////////////////////////
 
 void PrintHex(const string& label, const CryptoPP::byte* data, size_t len)
 {
@@ -35,23 +33,42 @@ void PrintHex(const string& label, const CryptoPP::byte* data, size_t len)
     cout << label << ": " << enc << endl;
 }
 
-//////////////////////////////////////////////////////////////
-// Security
-//////////////////////////////////////////////////////////////
+// Validations
+
+void ValidateKey(const string& mode, size_t keyLen)
+{
+    if (mode == "xts")
+    {
+        if (keyLen != 32 && keyLen != 64)
+            throw runtime_error("[ERROR] XTS mode requires a 256-bit or 512-bit key!");
+    }
+    else
+    {
+        if (keyLen != 16 && keyLen != 24 && keyLen != 32)
+            throw runtime_error("[ERROR] Invalid key length!");
+    }
+}
 
 void ValidateIV(const string& mode, size_t len)
 {
     if (mode == "cbc" || mode == "cfb" || mode == "ofb" || mode == "ctr" || mode == "xts")
     {
         if (len != 16)
-            throw runtime_error("[ERROR] Invalid IV length. Expected 16 bytes.");
+            throw runtime_error("[ERROR] Invalid IV length!");
     }
-    else if (mode == "gcm" || mode == "ccm")
+    else if (mode == "gcm")
     {
         if (len == 0)
-            throw runtime_error("[ERROR] IV/Nonce cannot be empty.");
+            throw runtime_error("[ERROR] Invalid IV/Nonce length for GCM!");
         if (len != 12)
-            cout << "[WARNING] GCM/CCM works best with a 12-byte IV." << endl;
+            cout << "[WARNING] Invalid IV/Nonce length for GCM!" << endl;
+    }
+    else if (mode == "ccm")
+    {
+        if (len < 7 || len > 13)
+            throw runtime_error("[ERROR] Invalid IV/Nonce length for CCM!");
+        if (len != 12)
+            cout << "[WARNING] Invalid IV/Nonce length for CCM!" << endl;
     }
 }
 
@@ -72,7 +89,7 @@ void ValidateNonce(const string& mode, const SecByteBlock& key, const SecByteBlo
         while (getline(in, line))
         {
             if (line == rec)
-                throw runtime_error("[ERROR] Nonce reuse detected. Operation rejected.");
+                throw runtime_error("[ERROR] Nonce reuse detected!");
         }
         in.close();
     }
@@ -82,19 +99,19 @@ void ValidateNonce(const string& mode, const SecByteBlock& key, const SecByteBlo
         out << rec << endl;
 }
 
-//////////////////////////////////////////////////////////////
-// Key Management
-//////////////////////////////////////////////////////////////
+// Key Generations
 
-void GenerateAESKey(SecByteBlock& key, SecByteBlock& iv, size_t len)
+void GenerateAESKey(SecByteBlock& key, SecByteBlock& iv, size_t len, size_t ivLen = 16)
 {
     AutoSeededRandomPool rng;
     key.CleanNew(len);
-    iv.CleanNew(AES::BLOCKSIZE);
+    iv.CleanNew(ivLen);
 
     rng.GenerateBlock(key, key.size());
     rng.GenerateBlock(iv, iv.size());
 }
+
+// Save & Load Hex
 
 void SaveHex(const string& file, const SecByteBlock& key, const SecByteBlock& iv)
 {
@@ -131,6 +148,8 @@ void LoadHex(const string& file, SecByteBlock& key, SecByteBlock& iv)
     }
 }
 
+// Save & Load Binary
+
 void SaveBinary(const string& file, const SecByteBlock& key, const SecByteBlock& iv)
 {
     FileSink out(file.c_str());
@@ -159,6 +178,8 @@ void LoadBinary(const string& file, SecByteBlock& key, SecByteBlock& iv)
     }
 }
 
+// Load & Save
+
 void LoadKey(const string& fmt, const string& file, SecByteBlock& key, SecByteBlock& iv)
 {
     if (fmt == "hex")
@@ -179,9 +200,7 @@ void SaveKey(const string& fmt, const string& file, const SecByteBlock& key, con
         throw runtime_error("[ERROR] Unknown key format '" + fmt + "'. Use 'hex' or 'bin'.");
 }
 
-//////////////////////////////////////////////////////////////
-// Core Cryptography
-//////////////////////////////////////////////////////////////
+// Encrypt & Decrypt ECB
 
 void EncryptECB(const string& in, const string& out, const SecByteBlock& key)
 {
@@ -197,6 +216,8 @@ void DecryptECB(const string& in, const string& out, const SecByteBlock& key)
     FileSource src(in.c_str(), true, new StreamTransformationFilter(dec, new FileSink(out.c_str())));
 }
 
+// Encrypt & Decrypt CBC
+
 void EncryptCBC(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv)
 {
     CBC_Mode<AES>::Encryption enc;
@@ -210,6 +231,8 @@ void DecryptCBC(const string& in, const string& out, const SecByteBlock& key, co
     dec.SetKeyWithIV(key, key.size(), iv);
     FileSource src(in.c_str(), true, new StreamTransformationFilter(dec, new FileSink(out.c_str())));
 }
+
+// Encrypt & Decrypt CFB
 
 void EncryptCFB(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv)
 {
@@ -225,6 +248,8 @@ void DecryptCFB(const string& in, const string& out, const SecByteBlock& key, co
     FileSource src(in.c_str(), true, new StreamTransformationFilter(dec, new FileSink(out.c_str())));
 }
 
+// Encrypt & Decrypt OFB
+
 void EncryptOFB(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv)
 {
     OFB_Mode<AES>::Encryption enc;
@@ -238,6 +263,8 @@ void DecryptOFB(const string& in, const string& out, const SecByteBlock& key, co
     dec.SetKeyWithIV(key, key.size(), iv);
     FileSource src(in.c_str(), true, new StreamTransformationFilter(dec, new FileSink(out.c_str())));
 }
+
+// Encrypt & Decrypt CTR
 
 void EncryptCTR(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv)
 {
@@ -253,8 +280,13 @@ void DecryptCTR(const string& in, const string& out, const SecByteBlock& key, co
     FileSource src(in.c_str(), true, new StreamTransformationFilter(dec, new FileSink(out.c_str())));
 }
 
+// Encrypt & Decrypt XTS
+
 void EncryptXTS(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv)
 {
+    if (fs::file_size(in) < 16)
+        throw runtime_error("[ERROR] Invalid input size!");
+
     XTS_Mode<AES>::Encryption enc;
     enc.SetKeyWithIV(key, key.size(), iv);
     FileSource src(in.c_str(), true, new StreamTransformationFilter(enc, new FileSink(out.c_str()),
@@ -263,11 +295,16 @@ void EncryptXTS(const string& in, const string& out, const SecByteBlock& key, co
 
 void DecryptXTS(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv)
 {
+    if (fs::file_size(in) < 16)
+        throw runtime_error("[ERROR] Invalid input size!");
+
     XTS_Mode<AES>::Decryption dec;
     dec.SetKeyWithIV(key, key.size(), iv);
     FileSource src(in.c_str(), true, new StreamTransformationFilter(dec, new FileSink(out.c_str()),
                   StreamTransformationFilter::NO_PADDING));
 }
+
+// Encrypt & Decrypt CCM
 
 void EncryptCCM(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv, const string& aad)
 {
@@ -303,6 +340,8 @@ void DecryptCCM(const string& in, const string& out, const SecByteBlock& key, co
     FileSource src(in.c_str(), true, df);
 }
 
+// Encrypt & Decrypt GCM
+
 void EncryptGCM(const string& in, const string& out, const SecByteBlock& key, const SecByteBlock& iv, const string& aad)
 {
     GCM<AES>::Encryption enc;
@@ -332,47 +371,61 @@ void DecryptGCM(const string& in, const string& out, const SecByteBlock& key, co
     FileSource src(in.c_str(), true, df);
 }
 
-//////////////////////////////////////////////////////////////
 // Dispatchers
-//////////////////////////////////////////////////////////////
 
 void EncryptDispatch(const string& mode, const string& in, const string& out,
                      const SecByteBlock& key, const SecByteBlock& iv, const string& aad)
 {
     if (!aad.empty() && mode != "gcm" && mode != "ccm")
-        throw runtime_error("[ERROR] AAD is only supported in AEAD modes (GCM, CCM).");
+        throw runtime_error("[ERROR] AAD isn't supported in this mode!");
 
-    if      (mode == "ecb") EncryptECB(in, out, key);
-    else if (mode == "cbc") EncryptCBC(in, out, key, iv);
-    else if (mode == "cfb") EncryptCFB(in, out, key, iv);
-    else if (mode == "ofb") EncryptOFB(in, out, key, iv);
-    else if (mode == "ctr") EncryptCTR(in, out, key, iv);
-    else if (mode == "xts") EncryptXTS(in, out, key, iv);
-    else if (mode == "ccm") EncryptCCM(in, out, key, iv, aad);
-    else if (mode == "gcm") EncryptGCM(in, out, key, iv, aad);
-    else throw runtime_error("[ERROR] Unsupported AES mode: " + mode);
+    if (mode == "ecb")
+        EncryptECB(in, out, key);
+    else if (mode == "cbc")
+        EncryptCBC(in, out, key, iv);
+    else if (mode == "cfb")
+        EncryptCFB(in, out, key, iv);
+    else if (mode == "ofb")
+        EncryptOFB(in, out, key, iv);
+    else if (mode == "ctr")
+        EncryptCTR(in, out, key, iv);
+    else if (mode == "xts")
+        EncryptXTS(in, out, key, iv);
+    else if (mode == "ccm")
+        EncryptCCM(in, out, key, iv, aad);
+    else if (mode == "gcm")
+        EncryptGCM(in, out, key, iv, aad);
+    else
+        throw runtime_error("[ERROR] Unsupported mode!");
 }
 
 void DecryptDispatch(const string& mode, const string& in, const string& out,
                      const SecByteBlock& key, const SecByteBlock& iv, const string& aad)
 {
     if (!aad.empty() && mode != "gcm" && mode != "ccm")
-        throw runtime_error("[ERROR] AAD is only supported in AEAD modes (GCM, CCM).");
+        throw runtime_error("[ERROR] AAD isn't supported in this mode!");
 
-    if      (mode == "ecb") DecryptECB(in, out, key);
-    else if (mode == "cbc") DecryptCBC(in, out, key, iv);
-    else if (mode == "cfb") DecryptCFB(in, out, key, iv);
-    else if (mode == "ofb") DecryptOFB(in, out, key, iv);
-    else if (mode == "ctr") DecryptCTR(in, out, key, iv);
-    else if (mode == "xts") DecryptXTS(in, out, key, iv);
-    else if (mode == "ccm") DecryptCCM(in, out, key, iv, aad);
-    else if (mode == "gcm") DecryptGCM(in, out, key, iv, aad);
-    else throw runtime_error("[ERROR] Unsupported AES mode: " + mode);
+    if (mode == "ecb")
+        DecryptECB(in, out, key);
+    else if (mode == "cbc")
+        DecryptCBC(in, out, key, iv);
+    else if (mode == "cfb")
+        DecryptCFB(in, out, key, iv);
+    else if (mode == "ofb")
+        DecryptOFB(in, out, key, iv);
+    else if (mode == "ctr")
+        DecryptCTR(in, out, key, iv);
+    else if (mode == "xts")
+        DecryptXTS(in, out, key, iv);
+    else if (mode == "ccm")
+        DecryptCCM(in, out, key, iv, aad);
+    else if (mode == "gcm")
+        DecryptGCM(in, out, key, iv, aad);
+    else
+        throw runtime_error("[ERROR] Unsupported mode!");
 }
 
-//////////////////////////////////////////////////////////////
-// Main CLI
-//////////////////////////////////////////////////////////////
+// CLI
 
 int main(int argc, char* argv[]) {
 
@@ -406,20 +459,53 @@ int main(int argc, char* argv[]) {
             << "\n"
 
             << "Options:\n"
-            << "  --mode <ecb|cbc|cfb|ofb|ctr|xts|ccm|gcm>\n"
-            << "  --bits <128|192|256>\n"
-            << "  --key <file>\n"
-            << "  --key-hex <hex>\n"
-            << "  --in <file>\n"
-            << "  --text <text>\n"
-            << "  --out <file>\n"
-            << "  --iv <hex>\n"
-            << "  --nonce <hex>\n"
-            << "  --aad <file>\n"
-            << "  --aad-text <text>\n"
-            << "  --encode <hex|base64|raw>\n"
-            << "  --format <hex|bin>\n"
-            << "  --allow-ecb\n"
+
+            // Generate
+            << "  [generate]\n"
+            << "    --bits <128|192|256|512>\n"
+            << "    --key <file>\n"
+            << "    --format <hex|bin>\n"
+            << "\n"
+
+            // Encrypt
+            << "  [encrypt]\n"
+            << "    --mode <ecb|cbc|cfb|ofb|ctr|xts|ccm|gcm>\n"
+            << "    --key <file>\n"
+            << "    --key-hex <hex>\n"
+            << "    --in <file>\n"
+            << "    --text <text>\n"
+            << "    --out <file>\n"
+            << "    --iv <hex>\n"
+            << "    --nonce <hex>\n"
+            << "    --aead\n"
+            << "    --aad <file>\n"
+            << "    --aad-text <text>\n"
+            << "    --encode <hex|base64|raw>\n"
+            << "    --format <hex|bin>\n"
+            << "    --allow-ecb\n"
+            << "\n"
+
+            // Decrypt
+            << "  [decrypt]\n"
+            << "    --mode <ecb|cbc|cfb|ofb|ctr|xts|ccm|gcm>\n"
+            << "    --key <file>\n"
+            << "    --key-hex <hex>\n"
+            << "    --in <file>\n"
+            << "    --text <text>\n"
+            << "    --out <file>\n"
+            << "    --iv <hex>\n"
+            << "    --nonce <hex>\n"
+            << "    --aead\n"
+            << "    --aad <file>\n"
+            << "    --aad-text <text>\n"
+            << "    --encode <hex|base64|raw>\n"
+            << "    --format <hex|bin>\n"
+            << "\n"
+
+            // Show
+            << "  [show]\n"
+            << "    --key <file>\n"
+            << "    --format <hex|bin>\n"
             << "\n";
         return 1;
     }
@@ -446,24 +532,39 @@ int main(int argc, char* argv[]) {
         if (arg == "encrypt" || arg == "decrypt" || arg == "generate" || arg == "show")
             continue;
 
-        if      (arg == "--mode"     && i + 1 < argc) mode    = argv[++i];
-        else if (arg == "--key"      && i + 1 < argc) keyFile = argv[++i];
-        else if (arg == "--key-hex"  && i + 1 < argc) keyHex  = argv[++i];
-        else if (arg == "--in"       && i + 1 < argc) inFile  = argv[++i];
-        else if (arg == "--text"     && i + 1 < argc) inText  = argv[++i];
-        else if (arg == "--out"      && i + 1 < argc) outFile = argv[++i];
-        else if (arg == "--iv"       && i + 1 < argc) ivHex   = argv[++i];
-        else if (arg == "--nonce"    && i + 1 < argc) ivHex   = argv[++i];
-        else if (arg == "--encode"   && i + 1 < argc) encode  = argv[++i];
-        else if (arg == "--format"   && i + 1 < argc) fmt     = argv[++i];
-        else if (arg == "--bits"     && i + 1 < argc) bits    = stoi(argv[++i]);
-        else if (arg == "--aad"      && i + 1 < argc) aadFile = argv[++i];
-        else if (arg == "--aad-text" && i + 1 < argc) aadText = argv[++i];
-        else if (arg == "--allow-ecb") ecb = true;
-        else if (arg == "--aead")      aead = true;
+        if (arg == "--mode" && i + 1 < argc)
+            mode = argv[++i];
+        else if (arg == "--key" && i + 1 < argc)
+            keyFile = argv[++i];
+        else if (arg == "--key-hex" && i + 1 < argc)
+            keyHex = argv[++i];
+        else if (arg == "--in" && i + 1 < argc)
+            inFile = argv[++i];
+        else if (arg == "--text" && i + 1 < argc)
+            inText = argv[++i];
+        else if (arg == "--out" && i + 1 < argc)
+            outFile = argv[++i];
+        else if (arg == "--iv" && i + 1 < argc)
+            ivHex = argv[++i];
+        else if (arg == "--nonce" && i + 1 < argc)
+            ivHex = argv[++i];
+        else if (arg == "--encode" && i + 1 < argc)
+            encode = argv[++i];
+        else if (arg == "--format" && i + 1 < argc)
+            fmt = argv[++i];
+        else if (arg == "--bits" && i + 1 < argc)
+            bits = stoi(argv[++i]);
+        else if (arg == "--aad" && i + 1 < argc)
+            aadFile = argv[++i];
+        else if (arg == "--aad-text" && i + 1 < argc)
+            aadText = argv[++i];
+        else if (arg == "--allow-ecb")
+            ecb = true;
+        else if (arg == "--aead")
+            aead = true;
         else
         {
-            cerr << "[ERROR] Unknown or malformed argument '" << arg << "'." << endl;
+            cerr << "[ERROR] Invalid command!" << endl;
             return 1;
         }
     }
@@ -480,36 +581,40 @@ int main(int argc, char* argv[]) {
                 aad = b.str(); 
             }
             else 
-                cerr << "[WARNING] AAD file not found." << endl;
+                cerr << "[WARNING] Invalid aad path!" << endl;
         }
 
+        // Generate key
         if (cmd == "generate")
         {
             if (keyFile.empty())
             {
-                cerr << "[ERROR] Missing keyfile path." << endl;
+                cerr << "[ERROR] Invalid key path!" << endl;
                 return 1;
             }
 
             size_t len = bits / 8;
-            if (len != 16 && len != 24 && len != 32)
+            if (len != 16 && len != 24 && len != 32 && len != 64)
             {
-                cerr << "[ERROR] Invalid key size." << endl;
+                cerr << "[ERROR] Invalid key size!" << endl;
                 return 1;
             }
 
+            size_t ivLen = (mode == "gcm" || mode == "ccm") ? 12 : 16;
             SecByteBlock key, iv;
-            GenerateAESKey(key, iv, len);
+            GenerateAESKey(key, iv, len, ivLen);
             SaveKey(fmt, keyFile, key, iv);
-            cout << "[INFO] Generated " << bits << "-bit key saved to '" << keyFile << "'." << endl;
+            cout << "[INFO] Generated " << bits << "-bit key saved to " << keyFile << "!" << endl;
 
             return 0;
         }
+
+        // Show key
         else if (cmd == "show")
         {
             if (keyFile.empty() || !fs::exists(keyFile))
             {
-                cerr << "[ERROR] Key file missing or does not exist." << endl;
+                cerr << "[ERROR] Invalid key path!" << endl;
                 return 1;
             }
             SecByteBlock key, iv;
@@ -519,16 +624,18 @@ int main(int argc, char* argv[]) {
 
             return 0;
         }
+        
+        // Encrypt
         else if (cmd == "encrypt")
         {
             if (mode.empty() || outFile.empty())
             {
-                cerr << "[ERROR] Missing arguments for encrypt." << endl;
+                cerr << "[ERROR] Invalid arguments!" << endl;
                 return 1;
             }
             if (keyFile.empty() && keyHex.empty())
             {
-                cerr << "[ERROR] Missing key." << endl;
+                cerr << "[ERROR] Invalid key path!" << endl;
                 return 1;
             }
 
@@ -544,7 +651,7 @@ int main(int argc, char* argv[]) {
             }
             else if (inFile.empty() || !fs::exists(inFile))
             {
-                cerr << "[ERROR] Input file does not exist." << endl;
+                cerr << "[ERROR] Invalid input path!" << endl;
                 return 1;
             }
 
@@ -567,15 +674,15 @@ int main(int argc, char* argv[]) {
                 iv.Assign((const CryptoPP::byte*)iBin.data(), iBin.size());
             }
 
-            // Security 
+            // Security
 
             if (mode == "ecb")
             {
-                cout << "[WARNING] ECB mode is cryptographically insecure." << endl;
+                cout << "[WARNING] ECB is insecure!" << endl;
                 if (fs::file_size(inFile) > 16384 && !ecb)
                 {
                     if (isTemp) fs::remove(temp);
-                    throw runtime_error("[ERROR] Limit exceeded for ECB. Use --allow-ecb.");
+                    throw runtime_error("[ERROR] ECB mode requires --allow-ecb!");
                 }
             }
 
@@ -591,6 +698,13 @@ int main(int argc, char* argv[]) {
                 cout << "[INFO] Auto-generated IV: " << genIvHex << endl;
             }
 
+            if (mode == "ccm" && iv.size() == 16 && ivHex.empty())
+            {
+                iv.resize(12);
+            }
+
+            ValidateKey(mode, key.size());
+
             if (mode != "ecb") {
                 ValidateIV(mode, iv.size());
                 ValidateNonce(mode, key, iv);
@@ -599,7 +713,7 @@ int main(int argc, char* argv[]) {
             if ((mode == "gcm" || mode == "ccm") && !aead)
             {
                 if (isTemp) fs::remove(temp);
-                throw runtime_error("[ERROR] AEAD modes require --aead.");
+                throw runtime_error("[ERROR] AEAD mode requires --aead!");
             }
 
             EncryptDispatch(mode, inFile, outFile, key, iv, aad);
@@ -642,7 +756,7 @@ int main(int argc, char* argv[]) {
 
             if (isTemp) fs::remove(temp);
 
-            cout << "[INFO] Encryption complete: " << outFile << endl;
+            cout << "[INFO] Encrypted successfully: " << outFile << endl;
 
             string rOut;
             FileSource(outFile.c_str(), true, new StringSink(rOut));
@@ -657,20 +771,20 @@ int main(int argc, char* argv[]) {
                     StringSource(dec, true, new HexEncoder(new StringSink(hex)));
                 }
                 else StringSource(rOut, true, new HexEncoder(new StringSink(hex)));
-                
-                cout << "[INFO] Ciphertext (HEX): " << hex << endl;
             }
         }
+
+        // Decrypt
         else if (cmd == "decrypt")
         {
             if (mode.empty() || outFile.empty())
             {
-                cerr << "[ERROR] Missing arguments for decrypt." << endl;
+                cerr << "[ERROR] Invalid arguments!" << endl;
                 return 1;
             }
             if (keyFile.empty() && keyHex.empty())
             {
-                cerr << "[ERROR] Missing key." << endl;
+                cerr << "[ERROR] Invalid key path!" << endl;
                 return 1;
             }
 
@@ -686,7 +800,7 @@ int main(int argc, char* argv[]) {
             }
             else if (inFile.empty() || !fs::exists(inFile))
             {
-                cerr << "[ERROR] Input file does not exist." << endl;
+                cerr << "[ERROR] Invalid input path!" << endl;
                 return 1;
             }
 
@@ -711,6 +825,13 @@ int main(int argc, char* argv[]) {
 
             // Security
 
+            if (mode == "ccm" && iv.size() == 16 && ivHex.empty())
+            {
+                iv.resize(12);
+            }
+
+            ValidateKey(mode, key.size());
+
             if (mode != "ecb") {
                 ValidateIV(mode, iv.size());
             }
@@ -718,7 +839,7 @@ int main(int argc, char* argv[]) {
             if ((mode == "gcm" || mode == "ccm") && !aead)
             {
                 if (isTemp) fs::remove(temp);
-                throw runtime_error("[ERROR] AEAD modes require --aead.");
+                throw runtime_error("[ERROR] AEAD mode requires --aead!");
             }
 
             // Decode
@@ -747,11 +868,11 @@ int main(int argc, char* argv[]) {
 
             if (isTemp) fs::remove(temp);
 
-            cout << "[INFO] Decryption complete: " << outFile << endl;
+            cout << "[INFO] Decrypted successfully: " << outFile << endl;
         }
         else
         {
-            cerr << "[ERROR] Unknown command '" << cmd << "'." << endl;
+            cerr << "[ERROR] Unknown command '" << cmd << "'!" << endl;
             return 1;
         }
     }
