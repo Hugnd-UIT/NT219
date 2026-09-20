@@ -1,398 +1,517 @@
 #include <iostream>
 #include <fstream>
-#include <vector>
 #include <string>
-#include <oqs/oqs.h>
-#include "json.hpp" 
+#include <filesystem>
+#include <sstream>
+#include <vector>
+#include <iomanip>
+#include <stdexcept>
+#include <cstdint>
 
 #ifdef _WIN32
     #include <windows.h>
 #endif
 
+#include <oqs/oqs.h>
+#include "json.hpp"
+
+using namespace std;
+namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-//////////////////////////////////////////////////////////////
-// HELPER FUNCTIONS
-//////////////////////////////////////////////////////////////
+// Utilities
 
-void write_file(const std::string& path, const std::vector<uint8_t>& data) {
-    std::ofstream f(path, std::ios::binary); 
-    if (!data.empty()) {
-        f.write(reinterpret_cast<const char*>(data.data()), data.size());
+vector<uint8_t> ReadFile(const string& path)
+{
+    ifstream file(path, ios::binary | ios::ate);
+    if (!file.is_open())
+        throw runtime_error("[ERROR] Invalid input path!");
+
+    streamsize size = file.tellg();
+    file.seekg(0, ios::beg);
+
+    vector<uint8_t> buffer(size);
+    if (size > 0)
+    {
+        if (!file.read(reinterpret_cast<char*>(buffer.data()), size))
+            throw runtime_error("[ERROR] Invalid input path!");
+    }
+    return buffer;
+}
+
+void WriteFile(const string& path, const vector<uint8_t>& data)
+{
+    ofstream file(path, ios::binary);
+    if (!file.is_open())
+        throw runtime_error("[ERROR] Invalid output path!");
+
+    if (!data.empty())
+    {
+        file.write(reinterpret_cast<const char*>(data.data()), data.size());
     }
 }
 
-std::vector<uint8_t> read_file(const std::string& path) {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
-    
-    if (!f.is_open()) {
-        return {};
-    }
-    
-    size_t size = f.tellg(); 
-    f.seekg(0, std::ios::beg);
-    std::vector<uint8_t> buf(size); 
-    f.read(reinterpret_cast<char*>(buf.data()), size);
-    
-    return buf;
-}
+static const string B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-std::string get_arg(int argc, char* argv[], const std::string& flag, const std::string& default_val = "") {
-    for (int i = 1; i < argc - 1; ++i) {
-        if (std::string(argv[i]) == flag) {
-            return argv[i + 1];
-        }
-    }
-    return default_val;
-}
-
-static const std::string b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-std::string base64_encode(const uint8_t* bytes_to_encode, unsigned int in_len) {
-    std::string ret; 
+string Base64Encode(const uint8_t* data, size_t len)
+{
+    string ret;
     int i = 0;
-    int j = 0; 
-    uint8_t char_array_3[3];
-    uint8_t char_array_4[4];
-    
-    while (in_len--) {
-        char_array_3[i++] = *(bytes_to_encode++);
-        if (i == 3) {
-            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-            char_array_4[3] = char_array_3[2] & 0x3f;
-            
-            for (i = 0; i < 4; i++) {
-                ret += b64_chars[char_array_4[i]];
-            }
+    uint8_t a3[3];
+    uint8_t a4[4];
+
+    while (len--)
+    {
+        a3[i++] = *(data++);
+        if (i == 3)
+        {
+            a4[0] = (a3[0] & 0xfc) >> 2;
+            a4[1] = ((a3[0] & 0x03) << 4) + ((a3[1] & 0xf0) >> 4);
+            a4[2] = ((a3[1] & 0x0f) << 2) + ((a3[2] & 0xc0) >> 6);
+            a4[3] = a3[2] & 0x3f;
+
+            for (i = 0; i < 4; i++)
+                ret += B64[a4[i]];
             i = 0;
         }
     }
-    
-    if (i) {
-        for (j = i; j < 3; j++) {
-            char_array_3[j] = '\0';
-        }
-        
-        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-        
-        for (j = 0; j < i + 1; j++) {
-            ret += b64_chars[char_array_4[j]];
-        }
-        
-        while (i++ < 3) {
+
+    if (i)
+    {
+        for (int j = i; j < 3; j++)
+            a3[j] = '\0';
+
+        a4[0] = (a3[0] & 0xfc) >> 2;
+        a4[1] = ((a3[0] & 0x03) << 4) + ((a3[1] & 0xf0) >> 4);
+        a4[2] = ((a3[1] & 0x0f) << 2) + ((a3[2] & 0xc0) >> 6);
+
+        for (int j = 0; j < i + 1; j++)
+            ret += B64[a4[j]];
+
+        while (i++ < 3)
             ret += '=';
-        }
     }
     return ret;
 }
 
-std::vector<uint8_t> base64_decode(std::string const& encoded_string) {
-    int in_len = encoded_string.size(); 
+vector<uint8_t> Base64Decode(const string& str)
+{
+    size_t inLen = str.size();
     int i = 0;
-    int j = 0;
-    int in_ = 0;
-    uint8_t char_array_4[4];
-    uint8_t char_array_3[3]; 
-    std::vector<uint8_t> ret;
-    
-    while (in_len-- && (encoded_string[in_] != '=') && (isalnum(encoded_string[in_]) || (encoded_string[in_] == '+') || (encoded_string[in_] == '/'))) {
-        char_array_4[i++] = encoded_string[in_]; 
-        in_++;
-        
-        if (i == 4) {
-            for (i = 0; i < 4; i++) {
-                char_array_4[i] = b64_chars.find(char_array_4[i]);
-            }
-            
-            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-            
-            for (i = 0; i < 3; i++) {
-                ret.push_back(char_array_3[i]);
-            }
+    int in = 0;
+    uint8_t a4[4];
+    uint8_t a3[3];
+    vector<uint8_t> ret;
+
+    while (inLen-- && (str[in] != '=') && (isalnum(str[in]) || (str[in] == '+') || (str[in] == '/')))
+    {
+        a4[i++] = str[in++];
+        if (i == 4)
+        {
+            for (i = 0; i < 4; i++)
+                a4[i] = static_cast<uint8_t>(B64.find(a4[i]));
+
+            a3[0] = (a4[0] << 2) + ((a4[1] & 0x30) >> 4);
+            a3[1] = ((a4[1] & 0xf) << 4) + ((a4[2] & 0x3c) >> 2);
+            a3[2] = ((a4[2] & 0x3) << 6) + a4[3];
+
+            for (i = 0; i < 3; i++)
+                ret.push_back(a3[i]);
             i = 0;
         }
     }
-    
-    if (i) {
-        for (j = i; j < 4; j++) {
-            char_array_4[j] = 0;
-        }
-        
-        for (j = 0; j < 4; j++) {
-            char_array_4[j] = b64_chars.find(char_array_4[j]);
-        }
-        
-        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-        
-        for (j = 0; j < i - 1; j++) {
-            ret.push_back(char_array_3[j]);
-        }
+
+    if (i)
+    {
+        for (int j = 0; j < i; j++)
+            a4[j] = static_cast<uint8_t>(B64.find(a4[j]));
+
+        a3[0] = (a4[0] << 2) + ((a4[1] & 0x30) >> 4);
+        a3[1] = ((a4[1] & 0xf) << 4) + ((a4[2] & 0x3c) >> 2);
+
+        for (int j = 0; j < i - 1; j++)
+            ret.push_back(a3[j]);
     }
     return ret;
 }
 
-//////////////////////////////////////////////////////////////
-// CORE HANDLERS
-//////////////////////////////////////////////////////////////
+// Validations
 
-void handle_keygen(std::string algo, std::string pub_path, std::string priv_path) {
-    if (algo == OQS_SIG_alg_ml_dsa_44 || algo == OQS_SIG_alg_ml_dsa_65) {
-        OQS_SIG *sig = OQS_SIG_new(algo.c_str());
-        if (!sig) { 
-            std::cerr << "[ERROR] OQS_SIG_new failed for: " << algo << "\n"; 
-            return; 
-        }
-        
-        std::vector<uint8_t> pub(sig->length_public_key);
-        std::vector<uint8_t> priv(sig->length_secret_key);
-        
-        OQS_SIG_keypair(sig, pub.data(), priv.data());
-        write_file(pub_path, pub); 
-        write_file(priv_path, priv);
-        
-        std::cout << "[INFO] Tao khoa thanh cong: " << algo << "\n";
+string ResolveOQSAlgo(const string& algo)
+{
+    if (algo == "mldsa-44")
+        return OQS_SIG_alg_ml_dsa_44;
+    else if (algo == "mldsa-65")
+        return OQS_SIG_alg_ml_dsa_65;
+    else if (algo == "mlkem-512")
+        return OQS_KEM_alg_ml_kem_512;
+    throw runtime_error("[ERROR] Invalid algorithm!");
+}
+
+bool IsSigAlgo(const string& algo)
+{
+    return (algo == "mldsa-44" || algo == "mldsa-65");
+}
+
+bool IsKemAlgo(const string& algo)
+{
+    return (algo == "mlkem-512");
+}
+
+// Operations
+
+void GenerateKey(const string& algo, const string& pubPath, const string& privPath)
+{
+    string oqsAlg = ResolveOQSAlgo(algo);
+
+    if (IsSigAlgo(algo))
+    {
+        OQS_SIG* sig = OQS_SIG_new(oqsAlg.c_str());
+        if (!sig)
+            throw runtime_error("[ERROR] Invalid algorithm!");
+
+        vector<uint8_t> pub(sig->length_public_key);
+        vector<uint8_t> priv(sig->length_secret_key);
+
+        OQS_STATUS status = OQS_SIG_keypair(sig, pub.data(), priv.data());
         OQS_SIG_free(sig);
-    } 
-    else if (algo == OQS_KEM_alg_ml_kem_512) {
-        OQS_KEM *kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
-        if (!kem) { 
-            std::cerr << "[ERROR] OQS_KEM_new failed\n"; 
-            return; 
-        }
-        
-        std::vector<uint8_t> pub(kem->length_public_key);
-        std::vector<uint8_t> priv(kem->length_secret_key);
-        
-        OQS_KEM_keypair(kem, pub.data(), priv.data());
-        write_file(pub_path, pub); 
-        write_file(priv_path, priv);
-        
-        std::cout << "[INFO] Tao khoa thanh cong: " << algo << "\n";
+
+        if (status != OQS_SUCCESS)
+            throw runtime_error("[ERROR] Key generation failed!");
+
+        WriteFile(pubPath, pub);
+        WriteFile(privPath, priv);
+        cout << "[INFO] Key pair generated: " << algo << endl;
+    }
+    else if (IsKemAlgo(algo))
+    {
+        OQS_KEM* kem = OQS_KEM_new(oqsAlg.c_str());
+        if (!kem)
+            throw runtime_error("[ERROR] Invalid algorithm!");
+
+        vector<uint8_t> pub(kem->length_public_key);
+        vector<uint8_t> priv(kem->length_secret_key);
+
+        OQS_STATUS status = OQS_KEM_keypair(kem, pub.data(), priv.data());
         OQS_KEM_free(kem);
-    } 
-    else {
-        std::cerr << "[ERROR] Thuat toan khong hop le: " << algo << "\n";
+
+        if (status != OQS_SUCCESS)
+            throw runtime_error("[ERROR] Key generation failed!");
+
+        WriteFile(pubPath, pub);
+        WriteFile(privPath, priv);
+        cout << "[INFO] Key pair generated: " << algo << endl;
+    }
+    else
+    {
+        throw runtime_error("[ERROR] Invalid algorithm!");
     }
 }
 
-void handle_sign(std::string algo, std::string in, std::string out, std::string priv_path) {
-    OQS_SIG *sig = OQS_SIG_new(algo.c_str()); 
-    if (!sig) { 
-        std::cerr << "[ERROR] OQS_SIG_new failed for: " << algo << "\n"; 
-        return; 
-    }
-    
-    auto msg = read_file(in);
-    if (msg.empty()) { 
-        std::cerr << "[ERROR] Khong doc duoc file input: " << in << "\n"; 
-        OQS_SIG_free(sig); 
-        return; 
-    }
-    
-    auto priv = read_file(priv_path);
-    if (priv.empty()) { 
-        std::cerr << "[ERROR] Khong doc duoc private key: " << priv_path << "\n"; 
-        OQS_SIG_free(sig); 
-        return; 
-    }
-    
-    std::vector<uint8_t> signature(sig->length_signature);
-    size_t sig_len;
-    
-    OQS_SIG_sign(sig, signature.data(), &sig_len, msg.data(), msg.size(), priv.data());
-    signature.resize(sig_len);
-    write_file(out, signature);
-    
-    std::cout << "[INFO] Da ky file. Dung luong chu ky: " << sig_len << " bytes\n";
+void SignData(const string& algo, const string& inPath, const string& outPath, const string& privPath)
+{
+    if (!IsSigAlgo(algo))
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    string oqsAlg = ResolveOQSAlgo(algo);
+    OQS_SIG* sig = OQS_SIG_new(oqsAlg.c_str());
+    if (!sig)
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    vector<uint8_t> msg = ReadFile(inPath);
+    vector<uint8_t> priv = ReadFile(privPath);
+
+    vector<uint8_t> signature(sig->length_signature);
+    size_t sigLen = 0;
+
+    OQS_STATUS status = OQS_SIG_sign(sig, signature.data(), &sigLen, msg.data(), msg.size(), priv.data());
     OQS_SIG_free(sig);
+
+    if (status != OQS_SUCCESS)
+        throw runtime_error("[ERROR] Signing failed!");
+
+    signature.resize(sigLen);
+    WriteFile(outPath, signature);
+    cout << "[INFO] Signed successfully: " << outPath << " (" << sigLen << " bytes)" << endl;
 }
 
-void handle_verify(std::string algo, std::string in, std::string sig_f, std::string pub_path) {
-    OQS_SIG *sig = OQS_SIG_new(algo.c_str()); 
-    if (!sig) { 
-        std::cerr << "[ERROR] OQS_SIG_new failed for: " << algo << "\n"; 
-        return; 
-    }
-    
-    auto msg = read_file(in);
-    auto signature = read_file(sig_f);
-    auto pub = read_file(pub_path);
-    
-    if (msg.empty() || signature.empty() || pub.empty()) {
-        std::cerr << "[ERROR] Khong doc duoc 1 trong cac file can thiet (msg/sig/pub).\n";
-        OQS_SIG_free(sig); 
-        return;
-    }
-    
-    if (OQS_SIG_verify(sig, msg.data(), msg.size(), signature.data(), signature.size(), pub.data()) == OQS_SUCCESS) {
-        std::cout << "[INFO] VERIFIED SUCCESS: Chu ky hop le!\n";
-    } else {
-        std::cerr << "[ERROR] VERIFIED FAILED: Chu ky bi sai hoac file bi sua!\n";
-    }
-    
+void VerifyData(const string& algo, const string& inPath, const string& sigPath, const string& pubPath)
+{
+    if (!IsSigAlgo(algo))
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    string oqsAlg = ResolveOQSAlgo(algo);
+    OQS_SIG* sig = OQS_SIG_new(oqsAlg.c_str());
+    if (!sig)
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    vector<uint8_t> msg = ReadFile(inPath);
+    vector<uint8_t> signature = ReadFile(sigPath);
+    vector<uint8_t> pub = ReadFile(pubPath);
+
+    OQS_STATUS status = OQS_SIG_verify(sig, msg.data(), msg.size(), signature.data(), signature.size(), pub.data());
     OQS_SIG_free(sig);
-}
 
-void handle_encaps(std::string algo, std::string pub_path, std::string ct_path, std::string ss_path) {
-    OQS_KEM *kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
-    auto pub = read_file(pub_path);
-    std::vector<uint8_t> ct(kem->length_ciphertext);
-    std::vector<uint8_t> ss(kem->length_shared_secret);
-    
-    OQS_KEM_encaps(kem, ct.data(), ss.data(), pub.data());
-    write_file(ct_path, ct); 
-    write_file(ss_path, ss);
-    
-    std::cout << "[INFO] Encapsulate thanh cong! Sinh ra Shared Secret.\n";
-    OQS_KEM_free(kem);
-}
-
-void handle_decaps(std::string algo, std::string priv_path, std::string ct_path, std::string ss_path) {
-    OQS_KEM *kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
-    auto priv = read_file(priv_path); 
-    auto ct = read_file(ct_path);
-    std::vector<uint8_t> ss(kem->length_shared_secret);
-    
-    if (OQS_KEM_decaps(kem, ss.data(), ct.data(), priv.data()) == OQS_SUCCESS) {
-        write_file(ss_path, ss);
-        std::cout << "[INFO] Decapsulate thanh cong! Thu duoc Shared Secret.\n";
-    } else {
-        std::cerr << "[ERROR] Decapsulate FAILED: Ciphertext bi loi hoac sai khoa!\n";
+    if (status == OQS_SUCCESS)
+    {
+        cout << "[INFO] Verification successful!" << endl;
     }
-    
-    OQS_KEM_free(kem);
+    else
+    {
+        throw runtime_error("[ERROR] Verification failed!");
+    }
 }
 
-void handle_cert_issue(std::string sub, std::string pub_path, std::string ca_priv_path, std::string out_json, std::string algo = "mldsa-44") {
-    const char* alg;
-    if (algo == "mldsa-65") {
-        alg = OQS_SIG_alg_ml_dsa_65;
-    } else {
-        alg = OQS_SIG_alg_ml_dsa_44;
+void EncapsulateKey(const string& algo, const string& pubPath, const string& ctPath, const string& ssPath)
+{
+    if (!IsKemAlgo(algo))
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    string oqsAlg = ResolveOQSAlgo(algo);
+    OQS_KEM* kem = OQS_KEM_new(oqsAlg.c_str());
+    if (!kem)
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    vector<uint8_t> pub = ReadFile(pubPath);
+    vector<uint8_t> ct(kem->length_ciphertext);
+    vector<uint8_t> ss(kem->length_shared_secret);
+
+    OQS_STATUS status = OQS_KEM_encaps(kem, ct.data(), ss.data(), pub.data());
+    OQS_KEM_free(kem);
+
+    if (status != OQS_SUCCESS)
+        throw runtime_error("[ERROR] Encapsulation failed!");
+
+    WriteFile(ctPath, ct);
+    WriteFile(ssPath, ss);
+    cout << "[INFO] Encapsulation successful: " << ctPath << " & " << ssPath << endl;
+}
+
+void DecapsulateKey(const string& algo, const string& privPath, const string& ctPath, const string& ssPath)
+{
+    if (!IsKemAlgo(algo))
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    string oqsAlg = ResolveOQSAlgo(algo);
+    OQS_KEM* kem = OQS_KEM_new(oqsAlg.c_str());
+    if (!kem)
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    vector<uint8_t> priv = ReadFile(privPath);
+    vector<uint8_t> ct = ReadFile(ctPath);
+    vector<uint8_t> ss(kem->length_shared_secret);
+
+    OQS_STATUS status = OQS_KEM_decaps(kem, ss.data(), ct.data(), priv.data());
+    OQS_KEM_free(kem);
+
+    if (status == OQS_SUCCESS)
+    {
+        WriteFile(ssPath, ss);
+        cout << "[INFO] Decapsulation successful: " << ssPath << endl;
     }
-    
-    OQS_SIG *sig = OQS_SIG_new(alg);
-    auto ca_priv = read_file(ca_priv_path); 
-    auto user_pub = read_file(pub_path);
-    
-    std::string pub_b64 = base64_encode(user_pub.data(), user_pub.size());
-    std::string issuer = "PQ-CA";
-    std::string data_to_sign = sub + pub_b64 + issuer;
-    
-    std::vector<uint8_t> signature(sig->length_signature);
-    size_t sig_len;
-    
-    OQS_SIG_sign(sig, signature.data(), &sig_len, (const uint8_t*)data_to_sign.c_str(), data_to_sign.size(), ca_priv.data());
-    
-    json cert; 
-    cert["subject"] = sub; 
-    cert["public_key"] = pub_b64; 
+    else
+    {
+        throw runtime_error("[ERROR] Decapsulation failed!");
+    }
+}
+
+void IssueCertificate(const string& subject, const string& pubPath, const string& caPrivPath, const string& outJson, const string& algo)
+{
+    string oqsAlg = (algo == "mldsa-65") ? OQS_SIG_alg_ml_dsa_65 : OQS_SIG_alg_ml_dsa_44;
+    OQS_SIG* sig = OQS_SIG_new(oqsAlg.c_str());
+    if (!sig)
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    vector<uint8_t> caPriv = ReadFile(caPrivPath);
+    vector<uint8_t> userPub = ReadFile(pubPath);
+
+    string pubB64 = Base64Encode(userPub.data(), userPub.size());
+    string issuer = "PQ-CA";
+    string dataToSign = subject + pubB64 + issuer;
+
+    vector<uint8_t> signature(sig->length_signature);
+    size_t sigLen = 0;
+
+    OQS_STATUS status = OQS_SIG_sign(sig, signature.data(), &sigLen, reinterpret_cast<const uint8_t*>(dataToSign.c_str()), dataToSign.size(), caPriv.data());
+    OQS_SIG_free(sig);
+
+    if (status != OQS_SUCCESS)
+        throw runtime_error("[ERROR] Signing failed!");
+
+    json cert;
+    cert["subject"] = subject;
+    cert["public_key"] = pubB64;
     cert["issuer"] = issuer;
-    cert["algo"] = algo;
-    cert["signature"] = base64_encode(signature.data(), sig_len);
-    
-    std::ofstream o(out_json); 
-    o << cert.dump(4);
-    
-    std::cout << "[INFO] Tao chung chi JSON thanh cong: " << out_json << "\n";
-    OQS_SIG_free(sig);
+    cert["algo"] = (algo == "mldsa-65") ? "mldsa-65" : "mldsa-44";
+    cert["signature"] = Base64Encode(signature.data(), sigLen);
+
+    ofstream outFile(outJson);
+    if (!outFile.is_open())
+        throw runtime_error("[ERROR] Invalid output path!");
+
+    outFile << cert.dump(4) << endl;
+    cout << "[INFO] Certificate issued successfully: " << outJson << endl;
 }
 
-void handle_cert_verify(std::string in_json, std::string ca_pub_path) {
-    std::ifstream i(in_json);
-    if (!i.is_open()) { 
-        std::cerr << "[ERROR] Khong mo duoc file cert: " << in_json << "\n"; 
-        return; 
+void VerifyCertificate(const string& inJson, const string& caPubPath)
+{
+    ifstream inFile(inJson);
+    if (!inFile.is_open())
+        throw runtime_error("[ERROR] Invalid input path!");
+
+    json cert;
+    try
+    {
+        inFile >> cert;
     }
-    
-    json cert; 
-    i >> cert;
-    
-    std::string cert_algo = OQS_SIG_alg_ml_dsa_44;
-    if (cert.contains("algo")) {
-        std::string a = cert["algo"].get<std::string>();
-        if (a == "mldsa-65" || a == OQS_SIG_alg_ml_dsa_65) {
-            cert_algo = OQS_SIG_alg_ml_dsa_65;
+    catch (...)
+    {
+        throw runtime_error("[ERROR] Invalid certificate format!");
+    }
+
+    string certAlgo = OQS_SIG_alg_ml_dsa_44;
+    if (cert.contains("algo"))
+    {
+        string a = cert["algo"].get<string>();
+        if (a == "mldsa-65" || a == OQS_SIG_alg_ml_dsa_65)
+            certAlgo = OQS_SIG_alg_ml_dsa_65;
+    }
+
+    OQS_SIG* sig = OQS_SIG_new(certAlgo.c_str());
+    if (!sig)
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    vector<uint8_t> caPub = ReadFile(caPubPath);
+
+    if (!cert.contains("subject") || !cert.contains("public_key") || !cert.contains("issuer") || !cert.contains("signature"))
+    {
+        OQS_SIG_free(sig);
+        throw runtime_error("[ERROR] Invalid certificate format!");
+    }
+
+    string dataToSign = cert["subject"].get<string>() + cert["public_key"].get<string>() + cert["issuer"].get<string>();
+    vector<uint8_t> signature = Base64Decode(cert["signature"].get<string>());
+
+    OQS_STATUS status = OQS_SIG_verify(sig, reinterpret_cast<const uint8_t*>(dataToSign.c_str()), dataToSign.size(), signature.data(), signature.size(), caPub.data());
+    OQS_SIG_free(sig);
+
+    if (status == OQS_SUCCESS)
+    {
+        cout << "[INFO] Certificate verification successful!" << endl;
+    }
+    else
+    {
+        throw runtime_error("[ERROR] Verification failed!");
+    }
+}
+
+void BatchVerify(const string& algo, const string& listPath)
+{
+    ifstream lf(listPath);
+    if (!lf.is_open())
+        throw runtime_error("[ERROR] Invalid input path!");
+
+    if (algo.find("mldsa") != string::npos)
+    {
+        string oqsAlg = (algo == "mldsa-65") ? OQS_SIG_alg_ml_dsa_65 : OQS_SIG_alg_ml_dsa_44;
+        OQS_SIG* sig = OQS_SIG_new(oqsAlg.c_str());
+        if (!sig)
+            throw runtime_error("[ERROR] Invalid algorithm!");
+
+        string msgP, sigP, pubP;
+        int passed = 0;
+        int total = 0;
+
+        while (lf >> msgP >> sigP >> pubP)
+        {
+            if (fs::exists(msgP) && fs::exists(sigP) && fs::exists(pubP))
+            {
+                vector<uint8_t> m = ReadFile(msgP);
+                vector<uint8_t> s = ReadFile(sigP);
+                vector<uint8_t> p = ReadFile(pubP);
+
+                if (OQS_SIG_verify(sig, m.data(), m.size(), s.data(), s.size(), p.data()) == OQS_SUCCESS)
+                {
+                    passed++;
+                }
+                total++;
+            }
         }
+        OQS_SIG_free(sig);
+        cout << "[INFO] Batch verification (" << algo << "): " << passed << "/" << total << " PASSED" << endl;
     }
-    
-    OQS_SIG *sig = OQS_SIG_new(cert_algo.c_str());
-    if (!sig) { 
-        std::cerr << "[ERROR] OQS_SIG_new failed\n"; 
-        return; 
+    else if (algo == "mlkem-512")
+    {
+        OQS_KEM* kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
+        if (!kem)
+            throw runtime_error("[ERROR] Invalid algorithm!");
+
+        string ctP, privP;
+        int total = 0;
+        int passed = 0;
+
+        while (lf >> ctP >> privP)
+        {
+            if (fs::exists(ctP) && fs::exists(privP))
+            {
+                vector<uint8_t> ctData = ReadFile(ctP);
+                vector<uint8_t> privData = ReadFile(privP);
+                vector<uint8_t> ssRecovered(kem->length_shared_secret);
+
+                if (OQS_KEM_decaps(kem, ssRecovered.data(), ctData.data(), privData.data()) == OQS_SUCCESS)
+                {
+                    passed++;
+                }
+                total++;
+            }
+        }
+        OQS_KEM_free(kem);
+        cout << "[INFO] Batch decapsulation (" << algo << "): " << passed << "/" << total << " PASSED" << endl;
     }
-    
-    auto ca_pub = read_file(ca_pub_path);
-    if (ca_pub.empty()) { 
-        std::cerr << "[ERROR] Khong doc duoc CA public key: " << ca_pub_path << "\n"; 
-        OQS_SIG_free(sig); 
-        return; 
+    else
+    {
+        throw runtime_error("[ERROR] Invalid algorithm!");
     }
-    
-    std::string data_to_sign = cert["subject"].get<std::string>() + cert["public_key"].get<std::string>() + cert["issuer"].get<std::string>();
-    auto signature = base64_decode(cert["signature"].get<std::string>());
-    
-    if (OQS_SIG_verify(sig, (const uint8_t*)data_to_sign.c_str(), data_to_sign.size(), signature.data(), signature.size(), ca_pub.data()) == OQS_SUCCESS) {
-        std::cout << "[INFO] Chung chi HOP LE (Valid & Untampered)!\n";
-    } else {
-        std::cerr << "[ERROR] Xac minh chung chi THAT BAI!\n";
-    }
-    
-    OQS_SIG_free(sig);
 }
 
-//////////////////////////////////////////////////////////////
-// MAIN CLI
-//////////////////////////////////////////////////////////////
+// CLI
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[])
+{
     OQS_init();
 
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    std::cout << "\n";
-    std::cout << "  ██████╗  ██████╗ ███████╗████████╗\n";
-    std::cout << "  ██╔══██╗██╔═══██╗██╔════╝╚══██╔══╝\n";
-    std::cout << "  ██████╔╝██║   ██║███████╗   ██║   \n";
-    std::cout << "  ██╔═══╝ ██║   ██║╚════██║   ██║   \n";
-    std::cout << "  ██║     ╚██████╔╝███████║   ██║   \n";
-    std::cout << "  ╚═╝      ╚═════╝ ╚══════╝   ╚═╝   \n";
-    std::cout << "\n";
-    std::cout << "   ██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗██╗   ██╗███╗   ███╗\n";
-    std::cout << "  ██╔═══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝██║   ██║████╗ ████║\n";
-    std::cout << "  ██║   ██║██║   ██║███████║██╔██╗ ██║   ██║   ██║   ██║██╔████╔██║\n";
-    std::cout << "  ██║▄▄ ██║██║   ██║██╔══██║██║╚██╗██║   ██║   ██║   ██║██║╚██╔╝██║\n";
-    std::cout << "  ╚██████╔╝╚██████╔╝██║  ██║██║ ╚████║   ██║   ╚██████╔╝██║ ╚═╝ ██║\n";
-    std::cout << "   ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝\n";
-    std::cout << "\n";
-    std::cout << "   ██████╗██████╗ ██╗   ██╗██████╗ ████████╗ ██████╗  ██████╗ ██████╗  █████╗ ██████╗ ██╗  ██╗██╗   ██╗\n";
-    std::cout << "  ██╔════╝██╔══██╗╚██╗ ██╔╝██╔══██╗╚══██╔══╝██╔═══██╗██╔════╝ ██╔══██╗██╔══██╗██╔══██╗██║  ██║╚██╗ ██╔╝\n";
-    std::cout << "  ██║     ██████╔╝ ╚████╔╝ ██████╔╝   ██║   ██║   ██║██║  ███╗██████╔╝███████║██████╔╝███████║ ╚████╔╝ \n";
-    std::cout << "  ██║     ██╔══██╗  ╚██╔╝  ██╔═══╝    ██║   ██║   ██║██║   ██║██╔══██╗██╔══██║██╔═══╝ ██╔══██║  ╚██╔╝  \n";
-    std::cout << "  ╚██████╗██║  ██║   ██║   ██║        ██║   ╚██████╔╝╚██████╔╝██║  ██║██║  ██║██║     ██║  ██║   ██║   \n";
-    std::cout << "   ╚═════╝╚═╝  ╚═╝   ╚═╝   ╚═╝        ╚═╝    ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝   ╚═╝   \n";
-    std::cout << "\n";
+    cout << "\n";
+    cout << "  ██████╗  ██████╗ ███████╗████████╗\n";
+    cout << "  ██╔══██╗██╔═══██╗██╔════╝╚══██╔══╝\n";
+    cout << "  ██████╔╝██║   ██║███████╗   ██║   \n";
+    cout << "  ██╔═══╝ ██║   ██║╚════██║   ██║   \n";
+    cout << "  ██║     ╚██████╔╝███████║   ██║   \n";
+    cout << "  ╚═╝      ╚═════╝ ╚══════╝   ╚═╝   \n";
+    cout << "\n";
+    cout << "   ██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗██╗   ██╗███╗   ███╗\n";
+    cout << "  ██╔═══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝██║   ██║████╗ ████║\n";
+    cout << "  ██║   ██║██║   ██║███████║██╔██╗ ██║   ██║   ██║   ██║██╔████╔██║\n";
+    cout << "  ██║▄▄ ██║██║   ██║██╔══██║██║╚██╗██║   ██║   ██║   ██║██║╚██╔╝██║\n";
+    cout << "  ╚██████╔╝╚██████╔╝██║  ██║██║ ╚████║   ██║   ╚██████╔╝██║ ╚═╝ ██║\n";
+    cout << "   ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝\n";
+    cout << endl;
 
-    if (argc < 2) {
-        std::cout
+    if (argc < 2)
+    {
+        cout
             << "Usage:\n"
-            << "  pqtool keygen [options]\n"
-            << "  pqtool sign [options]\n"
-            << "  pqtool verify [options]\n"
-            << "  pqtool encaps [options]\n"
-            << "  pqtool decaps [options]\n"
-            << "  pqtool cert-gen [options]\n"
-            << "  pqtool cert-verify [options]\n"
-            << "  pqtool verify-n [options]\n"
+            << "  ./pqtool keygen [options]\n"
+            << "  ./pqtool sign [options]\n"
+            << "  ./pqtool verify [options]\n"
+            << "  ./pqtool encaps [options]\n"
+            << "  ./pqtool decaps [options]\n"
+            << "  ./pqtool cert-gen [options]\n"
+            << "  ./pqtool cert-verify [options]\n"
+            << "  ./pqtool verify-n [options]\n"
             << "\n"
 
             << "Required:\n"
@@ -423,129 +542,157 @@ int main(int argc, char* argv[]) {
             << "Algorithms:\n"
             << "  ML-DSA : mldsa-44 mldsa-65\n"
             << "  ML-KEM : mlkem-512\n"
-        << std::endl;
-        OQS_destroy(); 
+            << endl;
+        OQS_destroy();
         return 1;
     }
 
-    std::string cmd = argv[1];
-    std::string algo_input = get_arg(argc, argv, "--algo");
-    std::string oqs_algo_str = "";
-    
-    if (algo_input == "mldsa-44") {
-        oqs_algo_str = OQS_SIG_alg_ml_dsa_44;
-    } else if (algo_input == "mldsa-65") {
-        oqs_algo_str = OQS_SIG_alg_ml_dsa_65;
-    } else if (algo_input == "mlkem-512") {
-        oqs_algo_str = OQS_KEM_alg_ml_kem_512;
-    }
+    string cmd      = argv[1];
+    string algo     = "";
+    string pubPath  = "";
+    string privPath = "";
+    string inPath   = "";
+    string outPath  = "";
+    string sigPath  = "";
+    string ctPath   = "";
+    string ssPath   = "";
+    string listPath = "";
+    string subject  = "PQ Subject";
+    string certAlgo = "mldsa-44";
 
-    if (cmd == "keygen") {
-        handle_keygen(oqs_algo_str, get_arg(argc, argv, "--pub"), get_arg(argc, argv, "--priv"));
-    } 
-    else if (cmd == "sign") {
-        handle_sign(oqs_algo_str, get_arg(argc, argv, "--in"), get_arg(argc, argv, "--out"), get_arg(argc, argv, "--priv"));
-    } 
-    else if (cmd == "verify") {
-        handle_verify(oqs_algo_str, get_arg(argc, argv, "--in"), get_arg(argc, argv, "--sig"), get_arg(argc, argv, "--pub"));
-    } 
-    else if (cmd == "encaps") {
-        handle_encaps(oqs_algo_str, get_arg(argc, argv, "--pub"), get_arg(argc, argv, "--ct"), get_arg(argc, argv, "--ss"));
-    } 
-    else if (cmd == "decaps") {
-        handle_decaps(oqs_algo_str, get_arg(argc, argv, "--priv"), get_arg(argc, argv, "--ct"), get_arg(argc, argv, "--ss"));
-    }
-    else if (cmd == "cert-gen") {
-        std::string sub = get_arg(argc, argv, "--subject");
-        std::string cert_algo = get_arg(argc, argv, "--cert-algo", "mldsa-44");
-        
-        if (sub.empty()) {
-            sub = "PQ Subject";
-        }
-        
-        handle_cert_issue(sub, get_arg(argc, argv, "--pub"), get_arg(argc, argv, "--priv"), get_arg(argc, argv, "--out"), cert_algo);
-    }
-    else if (cmd == "cert-verify") {
-        handle_cert_verify(get_arg(argc, argv, "--in"), get_arg(argc, argv, "--pub"));
-    }
-    else if (cmd == "verify-n") {
-        std::string algo = get_arg(argc, argv, "--algo");
-        std::string list_file = get_arg(argc, argv, "--list");
-        
-        if (list_file.empty() || algo.empty()) {
-            std::cerr << "[ERROR] Thieu flag --list hoac --algo cho verify-n!\n";
-            OQS_destroy(); 
+    for (int i = 2; i < argc; ++i)
+    {
+        string arg = argv[i];
+        if (arg == "--algo" && i + 1 < argc)
+            algo = argv[++i];
+        else if (arg == "--pub" && i + 1 < argc)
+            pubPath = argv[++i];
+        else if (arg == "--priv" && i + 1 < argc)
+            privPath = argv[++i];
+        else if (arg == "--in" && i + 1 < argc)
+            inPath = argv[++i];
+        else if (arg == "--out" && i + 1 < argc)
+            outPath = argv[++i];
+        else if (arg == "--sig" && i + 1 < argc)
+            sigPath = argv[++i];
+        else if (arg == "--ct" && i + 1 < argc)
+            ctPath = argv[++i];
+        else if (arg == "--ss" && i + 1 < argc)
+            ssPath = argv[++i];
+        else if (arg == "--list" && i + 1 < argc)
+            listPath = argv[++i];
+        else if (arg == "--subject" && i + 1 < argc)
+            subject = argv[++i];
+        else if (arg == "--cert-algo" && i + 1 < argc)
+            certAlgo = argv[++i];
+        else
+        {
+            cerr << "[ERROR] Invalid command!" << endl;
+            OQS_destroy();
             return 1;
         }
-        
-        std::ifstream lf(list_file);
-        if (!lf.is_open()) { 
-            std::cerr << "[ERROR] Khong mo duoc file danh sach!\n"; 
-            OQS_destroy(); 
-            return 1; 
-        }
+    }
 
-        if (algo.find("mldsa") != std::string::npos) {
-            const char* oqs_alg;
-            if (algo == "mldsa-65") {
-                oqs_alg = OQS_SIG_alg_ml_dsa_65;
-            } else {
-                oqs_alg = OQS_SIG_alg_ml_dsa_44;
+    try
+    {
+        if (cmd == "keygen")
+        {
+            if (algo.empty() || pubPath.empty() || privPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
             }
-            
-            OQS_SIG *sig = OQS_SIG_new(oqs_alg);
-            std::string msg_p, sig_p, pub_p;
-            int passed = 0;
-            int total = 0;
-            
-            std::cout << "[INFO] Running Batch Verification for " << algo << "...\n";
-            
-            while (lf >> msg_p >> sig_p >> pub_p) {
-                auto m = read_file(msg_p); 
-                auto s = read_file(sig_p); 
-                auto p = read_file(pub_p);
-                
-                if (!m.empty() && !s.empty() && !p.empty()) {
-                    if (OQS_SIG_verify(sig, m.data(), m.size(), s.data(), s.size(), p.data()) == OQS_SUCCESS) {
-                        passed++;
-                    }
-                    total++;
-                }
-            }
-            
-            std::cout << "[INFO] Batch Verify (" << algo << "): " << passed << "/" << total << " PASSED\n";
-            OQS_SIG_free(sig);
+            GenerateKey(algo, pubPath, privPath);
         }
-        else if (algo == "mlkem-512") {
-            OQS_KEM *kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
-            std::string ct_p, priv_p; 
-            int total = 0;
-            int passed = 0;
-            
-            std::cout << "[INFO] Running Batch Decapsulation for ML-KEM-512...\n";
-            
-            while (lf >> ct_p >> priv_p) {
-                auto ct_data = read_file(ct_p); 
-                auto priv_data = read_file(priv_p);
-                
-                if (!ct_data.empty() && !priv_data.empty()) {
-                    std::vector<uint8_t> ss_recovered(kem->length_shared_secret);
-                    
-                    if (OQS_KEM_decaps(kem, ss_recovered.data(), ct_data.data(), priv_data.data()) == OQS_SUCCESS) {
-                        passed++;
-                    }
-                    total++;
-                }
+        else if (cmd == "sign")
+        {
+            if (algo.empty() || inPath.empty() || outPath.empty() || privPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
             }
-            
-            std::cout << "[INFO] Batch Decapsulation Result: " << passed << "/" << total << " SUCCESS\n";
-            OQS_KEM_free(kem);
-        } else {
-            std::cerr << "[ERROR] Thuat toan batch ho tro khong hop le.\n";
+            SignData(algo, inPath, outPath, privPath);
+        }
+        else if (cmd == "verify")
+        {
+            if (algo.empty() || inPath.empty() || sigPath.empty() || pubPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
+            }
+            VerifyData(algo, inPath, sigPath, pubPath);
+        }
+        else if (cmd == "encaps")
+        {
+            if (algo.empty() || pubPath.empty() || ctPath.empty() || ssPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
+            }
+            EncapsulateKey(algo, pubPath, ctPath, ssPath);
+        }
+        else if (cmd == "decaps")
+        {
+            if (algo.empty() || privPath.empty() || ctPath.empty() || ssPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
+            }
+            DecapsulateKey(algo, privPath, ctPath, ssPath);
+        }
+        else if (cmd == "cert-gen")
+        {
+            if (pubPath.empty() || privPath.empty() || outPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
+            }
+            IssueCertificate(subject, pubPath, privPath, outPath, certAlgo);
+        }
+        else if (cmd == "cert-verify")
+        {
+            if (inPath.empty() || pubPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
+            }
+            VerifyCertificate(inPath, pubPath);
+        }
+        else if (cmd == "verify-n")
+        {
+            if (algo.empty() || listPath.empty())
+            {
+                cerr << "[ERROR] Invalid arguments!" << endl;
+                OQS_destroy();
+                return 1;
+            }
+            BatchVerify(algo, listPath);
+        }
+        else
+        {
+            cerr << "[ERROR] Invalid command!" << endl;
+            OQS_destroy();
+            return 1;
         }
     }
-    else {
-        std::cerr << "[ERROR] Unknown command.\n";
+    catch (const exception& e)
+    {
+        cerr << e.what() << endl;
+        if (!outPath.empty() && fs::exists(outPath))
+            fs::remove(outPath);
+        if (!ctPath.empty() && fs::exists(ctPath))
+            fs::remove(ctPath);
+        if (!ssPath.empty() && fs::exists(ssPath))
+            fs::remove(ssPath);
+        OQS_destroy();
+        return 1;
     }
 
     OQS_destroy();
