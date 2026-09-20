@@ -1,15 +1,13 @@
 #include <iostream>
 #include <fstream>
+#include <string>
+#include <filesystem>
 #include <sstream>
 #include <vector>
-#include <cstring>
-#include <stdexcept>
-#include <string>
-#include <cstdio>
 #include <iomanip>
 #include <set>
-#include <openssl/evp.h>
-#include <openssl/provider.h>
+#include <stdexcept>
+#include <cstdint>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -18,365 +16,461 @@
     #include <sys/mman.h>
     #include <sys/stat.h>
     #include <unistd.h>
-    #include <sys/resource.h>
-    #include <sys/time.h>
 #endif
 
-//////////////////////////////////////////////////////////////
-// OpenSSL
-//////////////////////////////////////////////////////////////
+#include <openssl/evp.h>
+#include <openssl/provider.h>
+
+using namespace std;
+namespace fs = std::filesystem;
+
+// Utilities
+
+string HexEncode(const uint8_t* data, size_t len)
+{
+    stringstream ss;
+    for (size_t i = 0; i < len; ++i)
+    {
+        ss << hex << setw(2) << setfill('0') << (int)data[i];
+    }
+    return ss.str();
+}
+
+string Base64Encode(const uint8_t* data, size_t len)
+{
+    if (len == 0)
+        return "";
+
+    size_t b64Len = 4 * ((len + 2) / 3);
+    string result(b64Len + 1, '\0');
+    int ret = EVP_EncodeBlock(reinterpret_cast<unsigned char*>(result.data()), data, static_cast<int>(len));
+    if (ret < 0)
+        throw runtime_error("[ERROR] Encode failed!");
+    result.resize(ret);
+    return result;
+}
 
 static int g_initialized = 0;
 
-void init_openssl() {
-    if (!g_initialized) {
+void OpenSSL()
+{
+    if (!g_initialized)
+    {
         OSSL_PROVIDER_load(NULL, "default");
         g_initialized = 1;
     }
 }
 
-//////////////////////////////////////////////////////////////
-// Utility
-//////////////////////////////////////////////////////////////
+// Validations
 
-void print_hex(const std::vector<unsigned char>& data) {
-    for (unsigned char c : data) {
-        std::printf("%02x", c);
-    }
-    std::printf("\n");
-}
-
-std::string to_hex_string(const std::vector<unsigned char>& data) {
-    std::stringstream ss;
-    for (unsigned char c : data) {
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)c;
-    }
-    return ss.str();
-}
-
-//////////////////////////////////////////////////////////////
-// Validation
-//////////////////////////////////////////////////////////////
-
-bool validate_fix_algo(const std::string& algo) {
-    static const std::set<std::string> valid_algos = {
+void ValidateAlgo(const string& algo)
+{
+    static const set<string> validAlgos = {
         "sha224", "sha256", "sha384", "sha512",
         "sha3-224", "sha3-256", "sha3-384", "sha3-512",
         "shake128", "shake256"
     };
-    return valid_algos.count(algo) > 0;
+    if (validAlgos.count(algo) == 0)
+        throw runtime_error("[ERROR] Invalid algorithm!");
 }
 
-bool validate_xof_algo(const std::string& algo) {
-    return (algo == "shake128" || algo == "shake256");
+// Operations
+
+vector<uint8_t> HashData(const string& algo, const uint8_t* data, size_t len, int outLen = -1)
+{
+    OpenSSL();
+
+    const EVP_MD* md = EVP_get_digestbyname(algo.c_str());
+    if (!md)
+        throw runtime_error("[ERROR] Invalid algorithm!");
+
+    bool xof = (algo == "shake128" || algo == "shake256");
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx)
+        throw runtime_error("[ERROR] OpenSSL failed!");
+
+    if (EVP_DigestInit_ex(ctx, md, nullptr) != 1)
+    {
+        EVP_MD_CTX_free(ctx);
+        throw runtime_error("[ERROR] DigestInit failed!");
+    }
+
+    if (len > 0 && EVP_DigestUpdate(ctx, data, len) != 1)
+    {
+        EVP_MD_CTX_free(ctx);
+        throw runtime_error("[ERROR] DigestUpdate failed!");
+    }
+
+    vector<uint8_t> digest;
+    if (xof)
+    {
+        digest.resize(outLen);
+        if (EVP_DigestFinalXOF(ctx, digest.data(), outLen) != 1)
+        {
+            EVP_MD_CTX_free(ctx);
+            throw runtime_error("[ERROR] DigestFinal failed!");
+        }
+    }
+    else
+    {
+        unsigned int digestLen = 0;
+        digest.resize(EVP_MAX_MD_SIZE);
+        if (EVP_DigestFinal_ex(ctx, digest.data(), &digestLen) != 1)
+        {
+            EVP_MD_CTX_free(ctx);
+            throw runtime_error("[ERROR] DigestFinal failed!");
+        }
+        digest.resize(digestLen);
+    }
+
+    EVP_MD_CTX_free(ctx);
+    return digest;
 }
 
-//////////////////////////////////////////////////////////////
-// Hash Class
-//////////////////////////////////////////////////////////////
+vector<uint8_t> HashStream(const string& algo, const string& inFile, int outLen = -1)
+{
+    OpenSSL();
 
-class Hasher {
-private:
-    const EVP_MD* md;
-    std::string algorithm_name;
-    bool is_xof;
+    const EVP_MD* md = EVP_get_digestbyname(algo.c_str());
+    if (!md)
+        throw runtime_error("[ERROR] Invalid algorithm!");
 
-public:
-    explicit Hasher(const std::string& algo) {
-        if (!validate_fix_algo(algo)) {
-            throw std::invalid_argument("[ERROR] Unsupported or disabled hash algorithm: " + algo);
-        }
+    bool xof = (algo == "shake128" || algo == "shake256");
 
-        init_openssl();
-        algorithm_name = algo;
-        is_xof = validate_xof_algo(algo);
+    ifstream file(inFile, ios::binary);
+    if (!file)
+        throw runtime_error("[ERROR] Invalid input path!");
 
-        md = EVP_get_digestbyname(algo.c_str());
-        if (!md) {
-            throw std::runtime_error("[ERROR] OpenSSL cannot initialize algorithm: " + algo);
-        }
-    }
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx)
+        throw runtime_error("[ERROR] OpenSSL failed!");
 
-    std::vector<unsigned char> hash_data(const unsigned char* data, size_t len, int xof_outlen = -1) {
-        if (!data && len > 0) throw std::runtime_error("[ERROR] Input data is null.");
-
-        EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-        if (!ctx) throw std::runtime_error("[ERROR] EVP_MD_CTX_new failed.");
-
-        if (EVP_DigestInit_ex(ctx, md, nullptr) != 1) {
-            EVP_MD_CTX_free(ctx);
-            throw std::runtime_error("[ERROR] DigestInit failed.");
-        }
-
-        if (len > 0 && EVP_DigestUpdate(ctx, data, len) != 1) {
-            EVP_MD_CTX_free(ctx);
-            throw std::runtime_error("[ERROR] DigestUpdate failed.");
-        }
-
-        std::vector<unsigned char> digest;
-        if (is_xof) {
-            if (xof_outlen <= 0) {
-                EVP_MD_CTX_free(ctx);
-                throw std::invalid_argument("[ERROR] SHAKE XOF requires --outlen > 0.");
-            }
-            digest.resize(xof_outlen);
-            if (EVP_DigestFinalXOF(ctx, digest.data(), xof_outlen) != 1) {
-                EVP_MD_CTX_free(ctx);
-                throw std::runtime_error("[ERROR] DigestFinalXOF failed.");
-            }
-        } else {
-            unsigned int digest_len = 0;
-            digest.resize(EVP_MAX_MD_SIZE);
-            if (EVP_DigestFinal_ex(ctx, digest.data(), &digest_len) != 1) {
-                EVP_MD_CTX_free(ctx);
-                throw std::runtime_error("[ERROR] DigestFinal failed.");
-            }
-            digest.resize(digest_len);
-        }
-
+    if (EVP_DigestInit_ex(ctx, md, nullptr) != 1)
+    {
         EVP_MD_CTX_free(ctx);
-        return digest;
+        throw runtime_error("[ERROR] DigestInit failed!");
     }
 
-    std::vector<unsigned char> hash_file_stream(const std::string& filename, int xof_outlen = -1) {
-        std::ifstream file(filename, std::ios::binary);
-        if (!file) throw std::runtime_error("[ERROR] Cannot open input file: " + filename);
+    const size_t bufSize = 65536;
+    vector<char> buffer(bufSize);
 
-        EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-        if (EVP_DigestInit_ex(ctx, md, nullptr) != 1) {
+    while (file.good())
+    {
+        file.read(buffer.data(), bufSize);
+        streamsize bytes = file.gcount();
+        if (bytes > 0)
+        {
+            if (EVP_DigestUpdate(ctx, reinterpret_cast<const unsigned char*>(buffer.data()), static_cast<size_t>(bytes)) != 1)
+            {
+                EVP_MD_CTX_free(ctx);
+                throw runtime_error("[ERROR] DigestUpdate failed!");
+            }
+        }
+    }
+
+    vector<uint8_t> digest;
+    if (xof)
+    {
+        digest.resize(outLen);
+        if (EVP_DigestFinalXOF(ctx, digest.data(), outLen) != 1)
+        {
             EVP_MD_CTX_free(ctx);
-            throw std::runtime_error("[ERROR] DigestInit failed.");
+            throw runtime_error("[ERROR] DigestFinal failed!");
         }
-
-        const size_t buffer_size = 8192;
-        char buffer[buffer_size];
-
-        while (file.good()) {
-            file.read(buffer, buffer_size);
-            std::streamsize bytes = file.gcount();
-            if (bytes > 0) {
-                if (EVP_DigestUpdate(ctx, reinterpret_cast<const unsigned char*>(buffer), static_cast<size_t>(bytes)) != 1) {
-                    EVP_MD_CTX_free(ctx);
-                    throw std::runtime_error("[ERROR] DigestUpdate failed.");
-                }
-            }
+    }
+    else
+    {
+        unsigned int digestLen = 0;
+        digest.resize(EVP_MAX_MD_SIZE);
+        if (EVP_DigestFinal_ex(ctx, digest.data(), &digestLen) != 1)
+        {
+            EVP_MD_CTX_free(ctx);
+            throw runtime_error("[ERROR] DigestFinal failed!");
         }
-
-        std::vector<unsigned char> digest;
-        if (is_xof) {
-            if (xof_outlen <= 0) {
-                EVP_MD_CTX_free(ctx);
-                throw std::invalid_argument("[ERROR] SHAKE XOF requires --outlen > 0.");
-            }
-            digest.resize(xof_outlen);
-            if (EVP_DigestFinalXOF(ctx, digest.data(), xof_outlen) != 1) {
-                EVP_MD_CTX_free(ctx);
-                throw std::runtime_error("[ERROR] DigestFinalXOF failed.");
-            }
-        } else {
-            unsigned int digest_len = 0;
-            digest.resize(EVP_MAX_MD_SIZE);
-            if (EVP_DigestFinal_ex(ctx, digest.data(), &digest_len) != 1) {
-                EVP_MD_CTX_free(ctx);
-                throw std::runtime_error("[ERROR] DigestFinal failed.");
-            }
-            digest.resize(digest_len);
-        }
-
-        EVP_MD_CTX_free(ctx);
-        return digest;
+        digest.resize(digestLen);
     }
 
-    std::vector<unsigned char> hash_file_mmap(const std::string& filename, int xof_outlen = -1) {
+    EVP_MD_CTX_free(ctx);
+    return digest;
+}
+
+vector<uint8_t> HashMmap(const string& algo, const string& inFile, int outLen = -1)
+{
+    uintmax_t fileSize = fs::file_size(inFile);
+    if (fileSize == 0)
+    {
+        cout << "[WARNING] Invalid input file!" << endl;
+        return HashData(algo, nullptr, 0, outLen);
+    }
+
 #ifdef _WIN32
-        HANDLE hFile = CreateFileA(filename.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (hFile == INVALID_HANDLE_VALUE) throw std::runtime_error("[ERROR] Cannot open file for mmap (Win32).");
+    HANDLE hFile = CreateFileA(inFile.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE)
+        throw runtime_error("[ERROR] Invalid input path!");
 
-        LARGE_INTEGER size;
-        GetFileSizeEx(hFile, &size);
-        if (size.QuadPart == 0) {
-            CloseHandle(hFile);
-            std::cout << "[WARNING] Input file is empty. Hashing empty input." << std::endl;
-            return hash_data(nullptr, 0, xof_outlen);
-        }
+    HANDLE hMap = CreateFileMappingA(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+    if (!hMap)
+    {
+        CloseHandle(hFile);
+        throw runtime_error("[ERROR] Invalid input path!");
+    }
 
-        HANDLE hMap = CreateFileMappingA(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
-        if (!hMap) { CloseHandle(hFile); throw std::runtime_error("[ERROR] CreateFileMapping failed."); }
-
-        const unsigned char* data = static_cast<const unsigned char*>(MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0));
-        if (!data) { CloseHandle(hMap); CloseHandle(hFile); throw std::runtime_error("[ERROR] MapViewOfFile failed."); }
-
-        std::vector<unsigned char> digest = hash_data(data, size.QuadPart, xof_outlen);
-
-        UnmapViewOfFile(data);
+    const unsigned char* data = static_cast<const unsigned char*>(MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0));
+    if (!data)
+    {
         CloseHandle(hMap);
         CloseHandle(hFile);
-        return digest;
-#else
-        int fd = open(filename.c_str(), O_RDONLY);
-        if (fd < 0) throw std::runtime_error("[ERROR] Cannot open file for mmap (UNIX).");
-
-        struct stat sb;
-        if (fstat(fd, &sb) < 0) { close(fd); throw std::runtime_error("[ERROR] fstat failed."); }
-        if (sb.st_size == 0) {
-            close(fd);
-            std::cout << "[WARNING] Input file is empty. Hashing empty input." << std::endl;
-            return hash_data(nullptr, 0, xof_outlen);
-        }
-
-        const unsigned char* data = static_cast<const unsigned char*>(mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0));
-        if (data == MAP_FAILED) { close(fd); throw std::runtime_error("[ERROR] mmap failed."); }
-
-        std::vector<unsigned char> digest = hash_data(data, sb.st_size, xof_outlen);
-
-        munmap(const_cast<unsigned char*>(data), sb.st_size);
-        close(fd);
-        return digest;
-#endif
+        throw runtime_error("[ERROR] Invalid input path!");
     }
-};
 
-//////////////////////////////////////////////////////////////
+    vector<uint8_t> digest = HashData(algo, data, fileSize, outLen);
+
+    UnmapViewOfFile(data);
+    CloseHandle(hMap);
+    CloseHandle(hFile);
+    return digest;
+#else
+    int fd = open(inFile.c_str(), O_RDONLY);
+    if (fd < 0)
+        throw runtime_error("[ERROR] Invalid input path!");
+
+    const unsigned char* data = static_cast<const unsigned char*>(mmap(NULL, fileSize, PROT_READ, MAP_PRIVATE, fd, 0));
+    if (data == MAP_FAILED)
+    {
+        close(fd);
+        throw runtime_error("[ERROR] Invalid input path!");
+    }
+
+    vector<uint8_t> digest = HashData(algo, data, fileSize, outLen);
+
+    munmap(const_cast<unsigned char*>(data), fileSize);
+    close(fd);
+    return digest;
+#endif
+}
+
+// Dispatchers
+
+vector<uint8_t> HashDispatch(const string& algo, const string& mode, const string& inFile, int outLen = -1)
+{
+    if (mode == "mmap")
+        return HashMmap(algo, inFile, outLen);
+    else if (mode == "stream")
+        return HashStream(algo, inFile, outLen);
+    else
+        throw runtime_error("[ERROR] Invalid mode!");
+}
+
 // CLI
-//////////////////////////////////////////////////////////////
 
-void print_banner() {
-
+int main(int argc, char* argv[])
+{
 #ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8); 
+    SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    std::cout <<
-        "\n"
-        "  ██╗  ██╗ █████╗ ███████╗██╗  ██╗\n"
-        "  ██║  ██║██╔══██╗██╔════╝██║  ██║\n"
-        "  ███████║███████║███████╗███████║\n"
-        "  ██╔══██║██╔══██║╚════██║██╔══██║\n"
-        "  ██║  ██║██║  ██║███████║██║  ██║\n"
-        "  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝\n"
-        "\n"
-    << std::endl;
-}
+    cout << "\n";
+    cout << "  ██╗  ██╗ █████╗ ███████╗██╗  ██╗\n";
+    cout << "  ██║  ██║██╔══██╗██╔════╝██║  ██║\n";
+    cout << "  ███████║███████║███████╗███████║\n";
+    cout << "  ██╔══██║██╔══██║╚════██║██╔══██║\n";
+    cout << "  ██║  ██║██║  ██║███████║██║  ██║\n";
+    cout << "  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝\n";
+    cout << endl;
 
-void print_usage() {
-    std::cout
-        << "Usage:\n"
-        << "  ./hashtool [options]\n"
-        << "\n"
+    if (argc < 2)
+    {
+        cout
+            << "Usage:\n"
+            << "  ./hashtool [options]\n"
+            << "\n"
 
-        << "Required:\n"
-        << "  --algo <algorithm>\n"
-        << "  --in <input>\n"
-        << "\n"
+            << "Required:\n"
+            << "  --algo <algorithm>\n"
+            << "  --in <file> OR --text <text>\n"
+            << "\n"
 
-        << "Options:\n"
-        << "  --out <output>\n"
-        << "  --outlen <bytes>\n"
-        << "  --stream\n"
-        << "  --mmap\n"
-        << "\n"
+            << "Options:\n"
+            << "  --algo <sha224|sha256|sha384|sha512|sha3-224|sha3-256|sha3-384|sha3-512|shake128|shake256>\n"
+            << "  --in <file>\n"
+            << "  --text <text>\n"
+            << "  --out <file>\n"
+            << "  --outlen <bytes>\n"
+            << "  --mode <stream|mmap>\n"
+            << "  --stream\n"
+            << "  --mmap\n"
+            << "  --encode <hex|base64|raw>\n"
+            << "  --format <hex|bin>\n"
+            << "\n"
 
-        << "Algorithms:\n"
-        << "  sha224 sha256 sha384 sha512\n"
-        << "  sha3-224 sha3-256 sha3-384 sha3-512\n"
-        << "  shake128 shake256\n"
-    << std::endl;
-}
-
-int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        print_banner();
-        print_usage();
+            << "Algorithms:\n"
+            << "  sha224 sha256 sha384 sha512\n"
+            << "  sha3-224 sha3-256 sha3-384 sha3-512\n"
+            << "  shake128 shake256\n"
+            << "\n";
         return 1;
     }
 
-    std::string algo, infile, outfile;
-    int outlen = -1;
-    bool use_stream = false;
-    bool use_mmap = false;
+    string algo      = "";
+    string inFile    = "";
+    string inText    = "";
+    string outFile   = "";
+    string mode      = "";
+    string encode    = "";
+    string fmt       = "";
+    int    outLen    = -1;
+    bool   useStream = false;
+    bool   useMmap   = false;
 
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--algo" && i + 1 < argc) {
+    for (int i = 1; i < argc; ++i)
+    {
+        string arg = argv[i];
+        if (arg == "--algo" && i + 1 < argc)
             algo = argv[++i];
-        } else if (arg == "--in" && i + 1 < argc) {
-            infile = argv[++i];
-        } else if (arg == "--out" && i + 1 < argc) {
-            outfile = argv[++i];
-        } else if (arg == "--outlen" && i + 1 < argc) {
-            try {
-                outlen = std::stoi(argv[++i]);
-            } catch (...) {
-                std::cerr << "[ERROR] --outlen must be a valid integer." << std::endl;
+        else if (arg == "--in" && i + 1 < argc)
+            inFile = argv[++i];
+        else if (arg == "--text" && i + 1 < argc)
+            inText = argv[++i];
+        else if (arg == "--out" && i + 1 < argc)
+            outFile = argv[++i];
+        else if (arg == "--outlen" && i + 1 < argc)
+        {
+            try
+            {
+                outLen = stoi(argv[++i]);
+            }
+            catch (...)
+            {
+                cerr << "[ERROR] Invalid command!" << endl;
                 return 1;
             }
-        } else if (arg == "--stream") {
-            use_stream = true;
-        } else if (arg == "--mmap") {
-            use_mmap = true;
-        } else {
-            std::cerr << "[ERROR] Unknown argument '" << arg << "'." << std::endl;
-            print_usage();
+        }
+        else if (arg == "--mode" && i + 1 < argc)
+            mode = argv[++i];
+        else if (arg == "--stream")
+            useStream = true;
+        else if (arg == "--mmap")
+            useMmap = true;
+        else if (arg == "--encode" && i + 1 < argc)
+            encode = argv[++i];
+        else if (arg == "--format" && i + 1 < argc)
+            fmt = argv[++i];
+        else
+        {
+            cerr << "[ERROR] Invalid command!" << endl;
             return 1;
         }
     }
 
-    try {
-        if (algo.empty() || infile.empty()) {
-            std::cerr << "[ERROR] Missing required parameters: --algo and --in." << std::endl;
-            print_usage();
+    try
+    {
+        if (algo.empty() || (inFile.empty() && inText.empty()))
+        {
+            cerr << "[ERROR] Invalid command!" << endl;
             return 1;
         }
 
-        if (!validate_fix_algo(algo)) {
-            std::cerr << "[ERROR] Unsupported algorithm '" << algo << "'." << std::endl;
+        if (useStream && useMmap)
+        {
+            cerr << "[ERROR] Invalid command!" << endl;
             return 1;
         }
 
-        if (validate_xof_algo(algo) && outlen <= 0) {
-            std::cerr << "[ERROR] Algorithm '" << algo << "' is an XOF and requires --outlen > 0." << std::endl;
-            return 1;
-        }
-
-        if (use_stream && use_mmap) {
-            std::cerr << "[ERROR] Cannot specify both --stream and --mmap." << std::endl;
-            return 1;
-        }
-
-        if (!use_mmap) {
-            use_stream = true;
-        }
-
-        std::cout << "[INFO] Algorithm  : " << algo << std::endl;
-        std::cout << "[INFO] Input file : " << infile << std::endl;
-        std::cout << "[INFO] I/O mode   : " << (use_mmap ? "Memory-mapped" : "Streamed") << std::endl;
-        if (validate_xof_algo(algo)) {
-            std::cout << "[INFO] Output len : " << outlen << " bytes" << std::endl;
-        }
-
-        Hasher hasher(algo);
-        std::vector<unsigned char> digest;
-
-        if (use_mmap) {
-            digest = hasher.hash_file_mmap(infile, outlen);
-        } else {
-            digest = hasher.hash_file_stream(infile, outlen);
-        }
-
-        std::cout << "[INFO] Digest     : ";
-        print_hex(digest);
-
-        if (!outfile.empty()) {
-            std::ofstream outbin(outfile, std::ios::binary);
-            if (!outbin) {
-                throw std::runtime_error("[ERROR] Failed to open output file: " + outfile);
+        if (!mode.empty())
+        {
+            if (mode != "stream" && mode != "mmap")
+            {
+                cerr << "[ERROR] Invalid mode!" << endl;
+                return 1;
             }
-            outbin.write(reinterpret_cast<const char*>(digest.data()), digest.size());
-            std::cout << "[INFO] Binary digest saved to: " << outfile << std::endl;
+            if (useStream || useMmap)
+            {
+                cerr << "[ERROR] Invalid command!" << endl;
+                return 1;
+            }
+        }
+        else
+        {
+            mode = useMmap ? "mmap" : "stream";
         }
 
-    } catch (const std::exception& e) {
-        std::cerr << e.what() << std::endl;
+        string temp = "temp";
+        bool isTemp = false;
+
+        if (!inText.empty())
+        {
+            inFile = temp;
+            ofstream out(inFile, ios::binary);
+            out << inText;
+            isTemp = true;
+        }
+        else if (inFile.empty() || !fs::exists(inFile))
+        {
+            cerr << "[ERROR] Invalid input path!" << endl;
+            return 1;
+        }
+
+        ValidateAlgo(algo);
+
+        if ((algo == "shake128" || algo == "shake256") && outLen <= 0)
+            throw runtime_error("[ERROR] XOF mode requires --outlen!");
+
+        cout << "[INFO] Algorithm  : " << algo << endl;
+        cout << "[INFO] Input file : " << (isTemp ? "[Text input]" : inFile) << endl;
+        cout << "[INFO] I/O mode   : " << (mode == "mmap" ? "Memory-mapped" : "Streamed") << endl;
+        
+        if (algo == "shake128" || algo == "shake256")
+        {
+            cout << "[INFO] Output len : " << outLen << " bytes" << endl;
+        }
+
+        vector<uint8_t> digest = HashDispatch(algo, mode, inFile, outLen);
+
+        cout << "[INFO] Digest     : " << HexEncode(digest.data(), digest.size()) << endl;
+
+        if (encode == "base64")
+        {
+            cout << "[INFO] Base64     : " << Base64Encode(digest.data(), digest.size()) << endl;
+        }
+
+        if (!outFile.empty())
+        {
+            ofstream out(outFile, ios::binary);
+            if (!out)
+                throw runtime_error("[ERROR] Invalid output path!");
+
+            if (encode == "hex" || fmt == "hex")
+            {
+                string hexStr = HexEncode(digest.data(), digest.size());
+                out.write(hexStr.data(), hexStr.size());
+                cout << "[INFO] Hex digest saved to: " << outFile << endl;
+            }
+            else if (encode == "base64")
+            {
+                string b64Str = Base64Encode(digest.data(), digest.size());
+                out.write(b64Str.data(), b64Str.size());
+                cout << "[INFO] Base64 digest saved to: " << outFile << endl;
+            }
+            else
+            {
+                out.write(reinterpret_cast<const char*>(digest.data()), digest.size());
+                cout << "[INFO] Binary digest saved to: " << outFile << endl;
+            }
+        }
+
+        if (isTemp && fs::exists(temp))
+        {
+            fs::remove(temp);
+        }
+    }
+    catch (const exception& e)
+    {
+        cerr << e.what() << endl;
+        if (!outFile.empty() && fs::exists(outFile))
+            fs::remove(outFile);
+        if (fs::exists("temp"))
+            fs::remove("temp");
         return 1;
     }
 
